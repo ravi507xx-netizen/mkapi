@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, List
 import os
 import json
+import random
 
 app = FastAPI(
     title="Universal AI API",
@@ -141,6 +142,9 @@ def update_usage(api_key: str):
     conn.commit()
     conn.close()
 
+# Available voices for TTS
+AVAILABLE_VOICES = ["echo", "fable", "onyx", "shimmer", "alloy", "nova"]
+
 # API Routes
 @app.get("/")
 async def root():
@@ -253,17 +257,17 @@ async def image_generation(
         conn.close()
         raise HTTPException(status_code=401, detail="Invalid API key")
     
-    # Call Pollinations.ai Image API
+    # Call Pollinations.ai Image API with nologo=true
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
-            pollinations_url = f"https://image.pollinations.ai/prompt/{prompt}"
+            pollinations_url = f"https://image.pollinations.ai/prompt/{prompt}?nologo=true"
             params = {"width": width, "height": height}
             response = await client.get(pollinations_url, params=params)
             response.raise_for_status()
             
             # Return image information
             image_response = {
-                "image_url": f"https://image.pollinations.ai/prompt/{prompt}?width={width}&height={height}",
+                "image_url": f"https://image.pollinations.ai/prompt/{prompt}?nologo=true&width={width}&height={height}",
                 "prompt": prompt,
                 "dimensions": f"{width}x{height}",
                 "note": "Visit the URL to see your generated image"
@@ -385,6 +389,83 @@ async def video_generation(
     log_request(api_key, "/video", prompt, response_time, 2)
     
     return video_response
+
+# New endpoints
+@app.get("/voice")
+async def voice_generation(
+    prompt: str = Query(..., description="Text to convert to speech"),
+    api_key: str = Query(..., description="Your API key"),
+    voice: str = Query(None, description="Voice model (echo, fable, onyx, shimmer, alloy, nova)")
+):
+    """Text-to-speech generation - COST: 1 credit"""
+    start_time = datetime.utcnow()
+    
+    # Check if user has enough credits (1 credit needed)
+    if not check_credits(api_key, 1):
+        raise HTTPException(status_code=402, detail="Insufficient credits. This service costs 1 credit.")
+    
+    # Use random voice if not specified
+    if not voice:
+        voice = random.choice(AVAILABLE_VOICES)
+    
+    # Validate voice parameter
+    if voice not in AVAILABLE_VOICES:
+        raise HTTPException(status_code=400, detail=f"Invalid voice. Available voices: {', '.join(AVAILABLE_VOICES)}")
+    
+    # Call voice generation API
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            voice_url = f"https://text.pollinations.ai/prompt/{prompt}?model=openai-audio&voice={voice}"
+            response = await client.get(voice_url)
+            response.raise_for_status()
+            voice_response = response.text
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Voice service error: {str(e)}")
+    
+    # Deduct credits and log request
+    response_time = (datetime.utcnow() - start_time).total_seconds()
+    use_credits(api_key, 1)
+    update_usage(api_key)
+    log_request(api_key, "/voice", prompt, response_time, 1)
+    
+    return {
+        "audio_url": voice_response,
+        "prompt": prompt,
+        "voice": voice,
+        "note": "Visit the URL to access your generated audio"
+    }
+
+@app.get("/song")
+async def song_search(
+    songname: str = Query(..., description="Song name to search"),
+    api_key: str = Query(..., description="Your API key")
+):
+    """Song search on Spotify - COST: 1 credit"""
+    start_time = datetime.utcnow()
+    
+    # Check if user has enough credits (1 credit needed)
+    if not check_credits(api_key, 1):
+        raise HTTPException(status_code=402, detail="Insufficient credits. This service costs 1 credit.")
+    
+    # Call Spotify search API
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            song_url = f"https://nepcoderapis.pages.dev/api/v1/spotify/search?songname={songname}"
+            response = await client.get(song_url)
+            response.raise_for_status()
+            song_response = response.json()
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Song search error: {str(e)}")
+    
+    # Deduct credits and log request
+    response_time = (datetime.utcnow() - start_time).total_seconds()
+    use_credits(api_key, 1)
+    update_usage(api_key)
+    log_request(api_key, "/song", songname, response_time, 1)
+    
+    return song_response
 
 # Admin Routes
 @app.get("/admin/generateapi")
